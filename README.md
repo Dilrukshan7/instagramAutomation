@@ -95,7 +95,7 @@ Done. Comment on one of your posts from another account to test.
 
 - Cloudflare Workers/KV: free tier (100k requests/day — far beyond personal volume).
 - Meta API: free.
-- You can use models like Gemini, Claude, or OpenAI’s paid models, or even free models from operators or locally  deployed models. Small free models are sufficient for this because it is just for replying to comments
+- You can use models like Gemini, Claude, or OpenAI’s paid models, or even free models from operators or locally  deployed models. Small free models are sufficient for this because it is just for replying to comments, No API key - AI simply skip
 ## Scaling to production later
 
 The processor is already parameterized by IG user ID, so the path to multi-user is: Meta App Review for Advanced Access (`instagram_business_manage_comments`/`_messages`), an OAuth "Login with Instagram" flow storing per-user tokens (D1/Postgres instead of the single KV token), and per-account rule sets. The webhook/processor/graph modules need no rewrite.
