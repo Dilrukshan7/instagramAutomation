@@ -1,0 +1,45 @@
+name = "ig-auto-responder"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+compatibility_flags = ["nodejs_compat"]
+
+# KV namespace for dedupe, token storage, rules, and reply log.
+# Create it with:  npx wrangler kv namespace create STATE
+# then paste the returned id below.
+[[kv_namespaces]]
+binding = "STATE"
+id = "a2440c336a39474f960d835ea31e2a0f"
+
+# Relational data: automations, message steps, providers, logs, analytics.
+[[d1_databases]]
+binding = "DB"
+database_name = "ig-auto-responder"
+database_id = "bef88c7f-e2b3-4b34-8bc5-86a81ee48f26"
+
+# Job scheduler: SQLite-backed Durable Object (free tier) that fires alarms to
+# drain the D1 jobs table for delayed/sequenced message sends.
+[[durable_objects.bindings]]
+name = "SCHEDULER"
+class_name = "Scheduler"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Scheduler"]
+
+[vars]
+# Your Instagram professional account's user ID (from the Meta app dashboard / /me endpoint)
+IG_USER_ID = "17841456545805611"
+# Graph API version to call
+GRAPH_API_VERSION = "v23.0"
+
+# Crons: weekly token refresh (Mondays 03:00 UTC) + every-minute job-queue
+# backstop (the Durable Object alarm is primary; this catches lost alarms).
+[triggers]
+crons = ["0 3 * * 1", "* * * * *"]
+
+# Secrets (set with `npx wrangler secret put <NAME>`):
+#   IG_ACCESS_TOKEN       - IGAAb2EnUaSOxBZAFl0YXIyY3RUdVlhcVlDQkdUaHJlT2o1b21BY2x0TXZAWS3M4NElOc0NnM3pUY3JfUWVpcXlYZAFdjcnFER05iRGZAtN0xpX2RJOEZA0eW5aMUQ4UnUtSGFVUlp2YXlyb2VqTFRwTDZArdXltZAXp5SG1HQWRyc0ZATWQZDZD
+#   META_APP_SECRET       - 5873176681c3611aa25091785b48d071
+#   WEBHOOK_VERIFY_TOKEN  - dvsfusgfsysfsfsygfsfs6f6sfsfg7sgf7s6fsr6sfysfa7rfa6f7agfyagf7ta6fa7fa556adadag6rGFTY56R56FTF6ARD56AEA
+#   ANTHROPIC_API_KEY     - for AI-generated replies
+#   ADMIN_TOKEN           - vCFdccBvufcd6ER56VUFVT&dD56dSCDUYFdVYfysdftsedysvguGUIsgydt76rYVBigd8frgshsu9utgs87FgsyGY8Sf86sf6S

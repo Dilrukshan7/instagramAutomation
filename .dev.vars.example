@@ -1,0 +1,6 @@
+# Copy to .dev.vars for local `wrangler dev`. Never commit .dev.vars.
+IG_ACCESS_TOKEN=paste-long-lived-instagram-token
+META_APP_SECRET=paste-meta-app-secret
+WEBHOOK_VERIFY_TOKEN=any-random-string-you-choose
+ANTHROPIC_API_KEY=sk-ant-...
+ADMIN_TOKEN=any-random-string-you-choose
