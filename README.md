@@ -48,15 +48,25 @@ npx wrangler login
 # Create the KV namespace and paste the returned id into wrangler.toml
 npx wrangler kv namespace create STATE
 
+# Create the D1 database and paste the returned database_id into wrangler.toml
+npx wrangler d1 create ig-auto-responder
+
+# Apply every migration in order to the production database
+npx wrangler d1 execute ig-auto-responder --remote --file ./migrations/0001_init.sql
+npx wrangler d1 execute ig-auto-responder --remote --file ./migrations/0002_followgate.sql
+npx wrangler d1 execute ig-auto-responder --remote --file ./migrations/0003_phase5.sql
+
 # Fill in IG_USER_ID in wrangler.toml [vars], then set secrets:
 npx wrangler secret put IG_ACCESS_TOKEN       # long-lived token from step 2.5
-npx wrangler secret put META_APP_SECRET       # from step 2.7
-npx wrangler secret put WEBHOOK_VERIFY_TOKEN  # invent a random string, note it down
-npx wrangler secret put ANTHROPIC_API_KEY     # from console.anthropic.com
+npx wrangler secret put META_APP_SECRET       # the Instagram app secret (webhook signing) from step 2.7
+npx wrangler secret put WEBHOOK_VERIFY_TOKEN  # invent a random string (<=64 chars), note it down
+npx wrangler secret put ANTHROPIC_API_KEY     # optional — or add Gemini/Grok/etc. keys later in the dashboard
 npx wrangler secret put ADMIN_TOKEN           # invent another random string
 
 npm run deploy
 ```
+
+> When you add a new migration later, run the same `d1 execute ... --file ./migrations/<file>.sql` command for it. Migrations are additive, so re-running an already-applied one is safe.
 
 Note the deployed URL, e.g. `https://ig-auto-responder.<you>.workers.dev`.
 
@@ -78,6 +88,21 @@ Done. Comment on one of your posts from another account to test.
 2. **Test delivery:** in the webhook config, use Meta's **Test** button on `comments` — then check `npm run tail` (live logs) or `GET /log?token=<ADMIN_TOKEN>`.
 3. **End-to-end:** from a friend's account, comment `price` on a post → expect the template reply + DM within seconds. Comment a free-form question → expect an AI reply.
 4. **Guards:** reply from your own account → no bot response. Meta redelivering the same event → no duplicate reply (deduped by comment ID).
+
+## Dashboard
+
+Open the deployed URL in a browser and paste your `ADMIN_TOKEN` to sign in. Everything is controlled here — no redeploys needed for day-to-day changes.
+
+| Tab | What it does |
+|---|---|
+| **Settings** | Pause/resume the bot, toggle AI replies, toggle comment classification, manage the Anthropic key, keyword rules, fallback replies, blocklist, and the activity log. |
+| **Posts** | Per-post/reel control: enable automation, public-reply/DM toggles, once-per-user, pick the AI provider, follow-gate funnel, and multi-step message sequences. |
+| **AI Providers** | Add/enable/test any LLM provider (Gemini, Grok, Groq, OpenRouter, OpenAI, Anthropic, or a custom/local OpenAI-compatible endpoint) and set the default. Shows 30-day token usage. |
+| **Funnel** | Follow-gated resource deliveries: who commented, nudge count, and delivery status. |
+| **Analytics** | Funnel counts (comments → replies → DMs → resources delivered), comment **intent** and **sentiment** breakdowns, and daily activity over a 1/7/30/90-day window. |
+| **Prompts** | Edit the AI's tone/style guidance with full version history. Saving creates a new version; you can roll back to any earlier one. The strict JSON output format is enforced separately, so editing the prompt can never break replies. |
+
+**Comment classification (intent + sentiment):** every AI-generated reply also classifies the comment for free (intent: question/interested/praise/complaint/spam/other; sentiment: positive/neutral/negative). Turn on the *Classify comments* toggle in Settings to also classify keyword/fallback replies (one small extra AI call each). Results feed the Analytics tab.
 
 ## Day-to-day operations
 

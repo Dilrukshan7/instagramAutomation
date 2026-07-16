@@ -1,3 +1,4 @@
+import { classifyComment } from "./classify";
 import { getAccountId, getAutomationForMedia, getSteps, hasPriorSend, recordEvent, recordSend } from "./db";
 import type { Automation } from "./db";
 import { handleFollowGate, processMessaging } from "./followgate";
@@ -193,4 +194,10 @@ async function processComment(env: Env, comment: CommentWebhookValue, entryId: s
     status: publicOk || dmOk ? "replied" : "error",
     detail: [base.detail, anyFailure].filter(Boolean).join(" | ") || undefined,
   });
+
+  // The AI path already recorded intent/sentiment in the same call. For
+  // keyword/fallback replies, classify separately if the user opted in.
+  if (decision.source !== "ai") {
+    await classifyComment(env, accountId, automation, comment.text);
+  }
 }

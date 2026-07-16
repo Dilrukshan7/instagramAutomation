@@ -74,6 +74,8 @@ export const DASHBOARD_HTML = `<!doctype html>
   <button data-tab="posts">Posts</button>
   <button data-tab="providers">AI Providers</button>
   <button data-tab="funnel">Funnel</button>
+  <button data-tab="analytics">Analytics</button>
+  <button data-tab="prompts">Prompts</button>
 </nav>
 
 <main id="app" style="display:none">
@@ -102,6 +104,60 @@ export const DASHBOARD_HTML = `<!doctype html>
         <thead><tr><th>User ID</th><th>Status</th><th>Nudges</th><th>Created</th><th>Delivered</th><th>Resource</th></tr></thead>
         <tbody id="pendingBody"></tbody>
       </table>
+    </section>
+  </div>
+
+  <div id="tab-analytics" style="display:none">
+    <section>
+      <h2>Analytics
+        <span style="float:right">
+          <select id="anDays" style="background:#0d1016;color:#e6e8ee;border:1px solid #2c3442;border-radius:6px;padding:5px">
+            <option value="1">Today</option>
+            <option value="7" selected>7 days</option>
+            <option value="30">30 days</option>
+            <option value="90">90 days</option>
+          </select>
+          <button class="ghost" id="refreshAnBtn">Refresh</button>
+        </span>
+      </h2>
+      <p class="hint">Counts come from bot activity. Intent &amp; sentiment appear once classification runs (AI replies classify automatically; enable the Settings toggle to classify keyword/fallback replies too).</p>
+      <div id="funnelCards" class="row" style="margin-bottom:16px"></div>
+      <div class="row" style="align-items:flex-start;gap:24px">
+        <div style="flex:1;min-width:240px">
+          <h2 style="font-size:13px">Comment intent</h2>
+          <table><tbody id="intentBody"></tbody></table>
+        </div>
+        <div style="flex:1;min-width:240px">
+          <h2 style="font-size:13px">Sentiment</h2>
+          <table><tbody id="sentimentBody"></tbody></table>
+        </div>
+      </div>
+    </section>
+    <section>
+      <h2>Daily activity</h2>
+      <table>
+        <thead><tr><th>Day</th><th>Comments</th><th>Replies</th><th>DMs</th></tr></thead>
+        <tbody id="dailyBody"></tbody>
+      </table>
+    </section>
+  </div>
+
+  <div id="tab-prompts" style="display:none">
+    <section>
+      <h2>AI system prompt</h2>
+      <p class="hint">This is the tone/style guidance the AI follows when writing replies. The strict JSON output format is enforced separately, so editing this can never break replies. Saving creates a new version; you can roll back anytime. Leave empty history to use the built-in default.</p>
+      <label>Prompt guidance</label>
+      <textarea id="promptContent" style="min-height:150px"></textarea>
+      <label>Version label (optional)</label>
+      <input type="text" id="promptLabel" placeholder="e.g. friendlier tone">
+      <div class="row savebar">
+        <button id="savePromptBtn">Save as new version</button>
+        <button class="ghost" id="loadDefaultBtn">Load built-in default</button>
+      </div>
+    </section>
+    <section>
+      <h2>Version history</h2>
+      <div id="promptVersions"><p class="muted">Loading...</p></div>
     </section>
   </div>
 
@@ -160,6 +216,7 @@ export const DASHBOARD_HTML = `<!doctype html>
     <h2>Bot settings</h2>
     <div class="toggle"><input type="checkbox" id="enabledToggle"><span>Bot enabled (replies to new comments)</span></div>
     <div class="toggle"><input type="checkbox" id="aiToggle"><span>AI replies enabled (for comments that match no keyword)</span></div>
+    <div class="toggle"><input type="checkbox" id="classifyToggle"><span>Classify comments (intent + sentiment) &mdash; AI replies classify for free; this also classifies keyword/fallback replies (one extra small AI call each)</span></div>
     <label>Anthropic API key <span class="muted" id="aiKeyStatus"></span></label>
     <div class="row">
       <input type="password" id="aiKeyInput" placeholder="sk-ant-..." style="flex:1">
@@ -249,6 +306,7 @@ export const DASHBOARD_HTML = `<!doctype html>
     return api('/settings').then(function (s) {
       el('enabledToggle').checked = s.enabled;
       el('aiToggle').checked = s.aiEnabled;
+      el('classifyToggle').checked = !!s.classifyEnabled;
       el('botState').textContent = s.enabled ? 'ACTIVE' : 'PAUSED';
       el('botState').style.background = s.enabled ? '#1d3b28' : '#46242a';
       var src = s.aiKeySource;
@@ -262,7 +320,8 @@ export const DASHBOARD_HTML = `<!doctype html>
   el('saveSettingsBtn').onclick = function () {
     api('/settings', 'PUT', {
       enabled: el('enabledToggle').checked,
-      aiEnabled: el('aiToggle').checked
+      aiEnabled: el('aiToggle').checked,
+      classifyEnabled: el('classifyToggle').checked
     }).then(function () { toast('Settings saved'); return loadSettings(); });
   };
   el('saveKeyBtn').onclick = function () {
@@ -409,9 +468,13 @@ export const DASHBOARD_HTML = `<!doctype html>
     el('tab-posts').style.display = tab === 'posts' ? '' : 'none';
     el('tab-providers').style.display = tab === 'providers' ? '' : 'none';
     el('tab-funnel').style.display = tab === 'funnel' ? '' : 'none';
+    el('tab-analytics').style.display = tab === 'analytics' ? '' : 'none';
+    el('tab-prompts').style.display = tab === 'prompts' ? '' : 'none';
     if (tab === 'posts' && !mediaLoaded) { loadProviders().then(loadMedia); }
     if (tab === 'providers' && !providersLoaded) { loadProviders(); }
     if (tab === 'funnel') { loadPending(); }
+    if (tab === 'analytics') { loadAnalytics(); }
+    if (tab === 'prompts') { loadPrompts(); }
   });
 
   // ---------- Funnel (pending deliveries) ----------
@@ -444,6 +507,128 @@ export const DASHBOARD_HTML = `<!doctype html>
     });
   }
   el('refreshPendingBtn').onclick = function () { loadPending(); };
+
+  // ---------- Analytics ----------
+  function statCard(label, value) {
+    var d = document.createElement('div');
+    d.style.cssText = 'flex:1;min-width:120px;background:#121620;border:1px solid #2c3442;border-radius:10px;padding:12px';
+    var v = document.createElement('div');
+    v.style.cssText = 'font-size:24px;font-weight:700;color:#e6e8ee';
+    v.textContent = value;
+    var l = document.createElement('div');
+    l.className = 'hint'; l.style.marginTop = '2px'; l.textContent = label;
+    d.appendChild(v); d.appendChild(l);
+    return d;
+  }
+  function fillKv(bodyId, rows, keyName, emptyMsg) {
+    var body = el(bodyId);
+    body.innerHTML = '';
+    if (!rows || rows.length === 0) {
+      body.innerHTML = '<tr><td colspan="2" class="muted">' + emptyMsg + '</td></tr>';
+      return;
+    }
+    rows.forEach(function (r) {
+      var tr = document.createElement('tr');
+      var td1 = document.createElement('td'); td1.textContent = r[keyName];
+      var td2 = document.createElement('td'); td2.textContent = r.count; td2.style.textAlign = 'right';
+      tr.appendChild(td1); tr.appendChild(td2);
+      body.appendChild(tr);
+    });
+  }
+  function loadAnalytics() {
+    var days = el('anDays').value;
+    return api('/analytics?days=' + days).then(function (a) {
+      var f = a.funnel || {};
+      var cards = el('funnelCards');
+      cards.innerHTML = '';
+      cards.appendChild(statCard('Comments', f.comment_received || 0));
+      cards.appendChild(statCard('Public replies', f.reply_sent || 0));
+      cards.appendChild(statCard('DMs sent', f.dm_sent || 0));
+      cards.appendChild(statCard('Resources delivered', f.resource_delivered || 0));
+      cards.appendChild(statCard('AI generations', f.ai_generation || 0));
+      fillKv('intentBody', a.intents, 'intent', 'No classified comments yet.');
+      fillKv('sentimentBody', a.sentiments, 'sentiment', 'No sentiment data yet.');
+      var body = el('dailyBody');
+      body.innerHTML = '';
+      (a.daily || []).forEach(function (d) {
+        var tr = document.createElement('tr');
+        [d.day, d.comments, d.replies, d.dms].forEach(function (v) {
+          var td = document.createElement('td'); td.textContent = v == null ? '' : v; tr.appendChild(td);
+        });
+        body.appendChild(tr);
+      });
+      if (!a.daily || a.daily.length === 0) {
+        body.innerHTML = '<tr><td colspan="4" class="muted">No activity in this window.</td></tr>';
+      }
+    });
+  }
+  el('refreshAnBtn').onclick = function () { loadAnalytics(); };
+  el('anDays').onchange = function () { loadAnalytics(); };
+
+  // ---------- Prompts ----------
+  var promptDefault = '';
+  function loadPrompts() {
+    return api('/prompts').then(function (res) {
+      promptDefault = res.defaultGuidance || '';
+      var versions = res.versions || [];
+      var active = versions.filter(function (v) { return v.isActive; })[0];
+      if (el('promptContent').value.trim() === '') {
+        el('promptContent').value = active ? active.content : promptDefault;
+      }
+      var list = el('promptVersions');
+      list.innerHTML = '';
+      if (versions.length === 0) {
+        list.innerHTML = '<p class="muted">No saved versions yet — the built-in default is in use.</p>';
+        return;
+      }
+      versions.forEach(function (v) {
+        var div = document.createElement('div');
+        div.className = 'rule';
+        var head = document.createElement('div'); head.className = 'head';
+        var title = document.createElement('strong');
+        title.textContent = 'v' + v.version + (v.label ? ' — ' + v.label : '');
+        if (v.isActive) {
+          var b = document.createElement('span'); b.className = 'badge'; b.textContent = 'ACTIVE';
+          title.appendChild(b);
+        }
+        head.appendChild(title);
+        var btns = document.createElement('div'); btns.className = 'row';
+        btns.appendChild(actionBtn('Edit', 'ghost', function () {
+          el('promptContent').value = v.content;
+          el('promptLabel').value = v.label || '';
+          toast('Loaded v' + v.version + ' into editor');
+        }));
+        if (!v.isActive) {
+          btns.appendChild(actionBtn('Activate', '', function () {
+            api('/prompts/' + v.id + '/activate', 'POST').then(function () {
+              toast('v' + v.version + ' is now active'); loadPrompts();
+            });
+          }));
+        }
+        head.appendChild(btns);
+        div.appendChild(head);
+        var pre = document.createElement('p');
+        pre.className = 'hint';
+        pre.style.whiteSpace = 'pre-wrap';
+        pre.textContent = v.content.slice(0, 240) + (v.content.length > 240 ? '…' : '');
+        div.appendChild(pre);
+        var meta = document.createElement('p'); meta.className = 'muted'; meta.style.fontSize = '12px';
+        meta.textContent = 'saved ' + (v.createdAt || '').replace('T', ' ').slice(0, 16);
+        div.appendChild(meta);
+        list.appendChild(div);
+      });
+    });
+  }
+  el('savePromptBtn').onclick = function () {
+    var content = el('promptContent').value.trim();
+    if (!content) { toast('Prompt cannot be empty'); return; }
+    api('/prompts', 'POST', { content: content, label: el('promptLabel').value.trim() })
+      .then(function () { el('promptLabel').value = ''; toast('New prompt version saved & active'); loadPrompts(); });
+  };
+  el('loadDefaultBtn').onclick = function () {
+    el('promptContent').value = promptDefault;
+    toast('Loaded built-in default (not saved yet)');
+  };
 
   // ---------- Providers ----------
   var PRESETS = null;

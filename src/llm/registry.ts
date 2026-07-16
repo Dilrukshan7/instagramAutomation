@@ -1,5 +1,5 @@
 import type { Automation } from "../db";
-import { recordAiUsage } from "../db";
+import { getActivePrompt, recordAiUsage, recordClassification } from "../db";
 import type { Env, ReplyDecision } from "../types";
 import { anthropicProvider } from "./anthropic";
 import { geminiProvider } from "./gemini";
@@ -31,6 +31,19 @@ export const KIND_PRESETS: Record<string, { baseUrl: string | null; model: strin
   custom: { baseUrl: "http://localhost:11434/v1", model: "llama3" },
 };
 
+export const INTENTS = ["question", "interested", "praise", "complaint", "spam", "other"];
+export const SENTIMENTS = ["positive", "neutral", "negative"];
+
+export function normalizeIntent(v: string | undefined): string {
+  const s = (v ?? "").toLowerCase().trim();
+  return INTENTS.includes(s) ? s : "other";
+}
+
+export function normalizeSentiment(v: string | undefined): string {
+  const s = (v ?? "").toLowerCase().trim();
+  return SENTIMENTS.includes(s) ? s : "neutral";
+}
+
 export function buildProvider(row: ProviderRow): LLMProvider {
   const key = row.api_key ?? "";
   switch (row.kind) {
@@ -51,7 +64,7 @@ export async function getProviderRow(env: Env, id: number): Promise<ProviderRow 
 }
 
 /** Resolve which provider to use: per-post choice → account default → none. */
-async function resolveProviderRow(env: Env, automation: Automation | null): Promise<ProviderRow | null> {
+export async function resolveProviderRow(env: Env, automation: Automation | null): Promise<ProviderRow | null> {
   if (automation?.provider_id) {
     const row = await getProviderRow(env, automation.provider_id);
     if (row && row.enabled === 1) return row;
@@ -64,13 +77,31 @@ async function resolveProviderRow(env: Env, automation: Automation | null): Prom
   return null;
 }
 
-const REPLY_SYSTEM_PROMPT = `You write replies for an Instagram account owner responding to comments on their posts.
-Given the post caption and a comment, respond with ONLY a JSON object (no code fences, no prose):
-{"public_reply": "...", "dm_message": "..."}
+// Editable guidance (tone/style). The DB-backed active prompt overrides THIS
+// part; the JSON contract below is always appended so a custom prompt can never
+// break parsing.
+export const DEFAULT_REPLY_GUIDANCE = `You write replies for an Instagram account owner responding to comments on their posts.
 - public_reply: short public reply to the comment (1-2 sentences, friendly, at most one emoji)
 - dm_message: private DM to the commenter (2-3 sentences, warm and personal, invite them to reply)
 Rules: never promise anything specific (prices, dates, availability) unless it appears in the caption.
 Never ask for personal information. Match the language of the comment. Keep it natural, not salesy.`;
+
+// Fixed output contract — always enforced regardless of the editable guidance.
+const REPLY_JSON_CONTRACT = `Respond with ONLY a JSON object (no code fences, no prose):
+{"public_reply": "...", "dm_message": "...", "intent": "...", "sentiment": "..."}
+- intent: one of question | interested | praise | complaint | spam | other
+- sentiment: one of positive | neutral | negative`;
+
+/** Assemble the system prompt: active/default guidance + fixed JSON contract + per-post note. */
+async function buildSystemPrompt(env: Env, accountId: number, automation: Automation | null): Promise<string> {
+  const active = await getActivePrompt(env, accountId);
+  const guidance = active?.content?.trim() || DEFAULT_REPLY_GUIDANCE;
+  let system = `${guidance}\n\n${REPLY_JSON_CONTRACT}`;
+  if (automation?.system_prompt) {
+    system += `\n\nAdditional instructions for this post:\n${automation.system_prompt}`;
+  }
+  return system;
+}
 
 /**
  * Generate an AI reply using the configured provider chain.
@@ -106,9 +137,7 @@ export async function generateViaLLM(
   }
   if (!provider || !model) return null;
 
-  const system = automation?.system_prompt
-    ? `${REPLY_SYSTEM_PROMPT}\n\nAdditional instructions for this post:\n${automation.system_prompt}`
-    : REPLY_SYSTEM_PROMPT;
+  const system = await buildSystemPrompt(env, accountId, automation);
 
   const result = await provider.generate({
     system,
@@ -120,9 +149,21 @@ export async function generateViaLLM(
   });
   await recordAiUsage(env, accountId, automation?.id ?? null, providerName, result.tokensIn, result.tokensOut);
 
-  const parsed = extractJson<{ public_reply: string; dm_message: string }>(result.text);
+  const parsed = extractJson<{ public_reply: string; dm_message: string; intent?: string; sentiment?: string }>(
+    result.text,
+  );
   if (!parsed.public_reply || !parsed.dm_message) {
     throw new Error("model JSON missing public_reply/dm_message");
+  }
+  // Classification comes free with the reply call — record it when present.
+  if (parsed.intent || parsed.sentiment) {
+    await recordClassification(
+      env,
+      accountId,
+      automation?.id ?? null,
+      normalizeIntent(parsed.intent),
+      normalizeSentiment(parsed.sentiment),
+    );
   }
   return { publicReply: parsed.public_reply, dmMessage: parsed.dm_message, source: "ai" };
 }

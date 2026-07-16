@@ -238,6 +238,162 @@ export async function recordEvent(
     .run();
 }
 
+/** Record a classified comment (intent + sentiment) for the analytics dashboard. */
+export async function recordClassification(
+  env: Env,
+  accountId: number,
+  automationId: number | null,
+  intent: string,
+  sentiment: string,
+): Promise<void> {
+  await env.DB.prepare(
+    "INSERT INTO analytics_events (account_id, automation_id, event_type, intent, sentiment) VALUES (?, ?, 'comment_classified', ?, ?)",
+  )
+    .bind(accountId, automationId, intent, sentiment)
+    .run();
+}
+
+// ---------- Prompt versioning (Phase 5) ----------
+
+export interface PromptVersion {
+  id: number;
+  account_id: number;
+  scope: string;
+  automation_id: number | null;
+  content: string;
+  version: number;
+  label: string | null;
+  is_active: number;
+  created_at: string;
+  updated_at: string | null;
+}
+
+/** The active global system prompt, or null if none saved (caller uses the built-in default). */
+export async function getActivePrompt(env: Env, accountId: number): Promise<PromptVersion | null> {
+  return env.DB.prepare(
+    "SELECT * FROM prompts WHERE account_id = ? AND scope = 'global' AND is_active = 1 ORDER BY version DESC LIMIT 1",
+  )
+    .bind(accountId)
+    .first<PromptVersion>();
+}
+
+/** All global prompt versions, newest first. */
+export async function listPrompts(env: Env, accountId: number): Promise<PromptVersion[]> {
+  const res = await env.DB.prepare(
+    "SELECT * FROM prompts WHERE account_id = ? AND scope = 'global' ORDER BY version DESC",
+  )
+    .bind(accountId)
+    .all<PromptVersion>();
+  return res.results;
+}
+
+/** Save a new global prompt version and make it active (append-only history). */
+export async function savePromptVersion(
+  env: Env,
+  accountId: number,
+  content: string,
+  label: string | null,
+): Promise<number> {
+  const max = await env.DB.prepare(
+    "SELECT COALESCE(MAX(version), 0) AS v FROM prompts WHERE account_id = ? AND scope = 'global'",
+  )
+    .bind(accountId)
+    .first<{ v: number }>();
+  const nextVersion = (max?.v ?? 0) + 1;
+  await env.DB.prepare("UPDATE prompts SET is_active = 0 WHERE account_id = ? AND scope = 'global'")
+    .bind(accountId)
+    .run();
+  const row = await env.DB.prepare(
+    `INSERT INTO prompts (account_id, scope, content, version, label, is_active, updated_at)
+     VALUES (?, 'global', ?, ?, ?, 1, datetime('now')) RETURNING id`,
+  )
+    .bind(accountId, content, nextVersion, label)
+    .first<{ id: number }>();
+  return row!.id;
+}
+
+/** Roll back to an existing version by making it the active one. */
+export async function activatePrompt(env: Env, accountId: number, id: number): Promise<boolean> {
+  const row = await env.DB.prepare(
+    "SELECT id FROM prompts WHERE id = ? AND account_id = ? AND scope = 'global'",
+  )
+    .bind(id, accountId)
+    .first();
+  if (!row) return false;
+  await env.DB.prepare("UPDATE prompts SET is_active = 0 WHERE account_id = ? AND scope = 'global'")
+    .bind(accountId)
+    .run();
+  await env.DB.prepare("UPDATE prompts SET is_active = 1, updated_at = datetime('now') WHERE id = ?")
+    .bind(id)
+    .run();
+  return true;
+}
+
+// ---------- Analytics aggregation (Phase 5) ----------
+
+export interface AnalyticsSummary {
+  funnel: Record<string, number>;
+  intents: Array<{ intent: string; count: number }>;
+  sentiments: Array<{ sentiment: string; count: number }>;
+  daily: Array<{ day: string; comments: number; replies: number; dms: number }>;
+  windowDays: number;
+}
+
+/** Aggregate analytics_events over a trailing window for the dashboard. */
+export async function getAnalytics(env: Env, accountId: number, windowDays: number): Promise<AnalyticsSummary> {
+  const since = `-${windowDays} days`;
+
+  const funnelRes = await env.DB.prepare(
+    `SELECT event_type, COUNT(*) AS n FROM analytics_events
+     WHERE account_id = ? AND ts > datetime('now', ?) GROUP BY event_type`,
+  )
+    .bind(accountId, since)
+    .all<{ event_type: string; n: number }>();
+  const funnel: Record<string, number> = {};
+  for (const r of funnelRes.results) funnel[r.event_type] = r.n;
+
+  const intentRes = await env.DB.prepare(
+    `SELECT intent, COUNT(*) AS n FROM analytics_events
+     WHERE account_id = ? AND intent IS NOT NULL AND ts > datetime('now', ?)
+     GROUP BY intent ORDER BY n DESC`,
+  )
+    .bind(accountId, since)
+    .all<{ intent: string; n: number }>();
+
+  const sentimentRes = await env.DB.prepare(
+    `SELECT sentiment, COUNT(*) AS n FROM analytics_events
+     WHERE account_id = ? AND sentiment IS NOT NULL AND ts > datetime('now', ?)
+     GROUP BY sentiment ORDER BY n DESC`,
+  )
+    .bind(accountId, since)
+    .all<{ sentiment: string; n: number }>();
+
+  const dailyRes = await env.DB.prepare(
+    `SELECT substr(ts, 1, 10) AS day,
+            SUM(event_type = 'comment_received') AS comments,
+            SUM(event_type = 'reply_sent') AS replies,
+            SUM(event_type = 'dm_sent') AS dms
+     FROM analytics_events
+     WHERE account_id = ? AND ts > datetime('now', ?)
+     GROUP BY day ORDER BY day DESC LIMIT 30`,
+  )
+    .bind(accountId, since)
+    .all<{ day: string; comments: number; replies: number; dms: number }>();
+
+  return {
+    funnel,
+    intents: intentRes.results.map((r) => ({ intent: r.intent, count: r.n })),
+    sentiments: sentimentRes.results.map((r) => ({ sentiment: r.sentiment, count: r.n })),
+    daily: dailyRes.results.map((r) => ({
+      day: r.day,
+      comments: r.comments ?? 0,
+      replies: r.replies ?? 0,
+      dms: r.dms ?? 0,
+    })),
+    windowDays,
+  };
+}
+
 export interface PendingDelivery {
   id: number;
   account_id: number;

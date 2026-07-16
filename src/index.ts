@@ -1,18 +1,22 @@
 import { Hono } from "hono";
 import { DASHBOARD_HTML } from "./dashboard";
 import {
+  activatePrompt,
   expireOldPending,
   getAccountId,
+  getAnalytics,
   getOrCreateAutomationId,
   getStepsForMedia,
   listAutomations,
   listPending,
+  listPrompts,
   replaceSteps,
+  savePromptVersion,
   upsertAutomation,
 } from "./db";
 import { runPendingRecheck } from "./followgate";
 import { getRecentMedia, refreshToken } from "./graph";
-import { getProviderRow, KIND_PRESETS, testProviderRow } from "./llm/registry";
+import { DEFAULT_REPLY_GUIDANCE, getProviderRow, KIND_PRESETS, testProviderRow } from "./llm/registry";
 import type { ProviderRow } from "./llm/registry";
 import { processWebhook } from "./processor";
 import { getBlocklist, getFallback, getRules, normalizeRule } from "./rules";
@@ -83,6 +87,7 @@ app.get("/api/settings", async (c) => {
   return c.json({
     enabled: (await c.env.STATE.get("config:enabled")) !== "false",
     aiEnabled: (await c.env.STATE.get("config:ai_enabled")) !== "false",
+    classifyEnabled: (await c.env.STATE.get("config:classify_enabled")) === "true",
     aiKeySource: kvKey ? "dashboard" : secretKey ? "secret" : "none",
     tokenMeta: JSON.parse((await c.env.STATE.get("config:token_meta")) ?? "null"),
   });
@@ -92,6 +97,7 @@ app.put("/api/settings", async (c) => {
   const body = (await c.req.json()) as {
     enabled?: boolean;
     aiEnabled?: boolean;
+    classifyEnabled?: boolean;
     anthropicKey?: string;
   };
   if (typeof body.enabled === "boolean") {
@@ -99,6 +105,9 @@ app.put("/api/settings", async (c) => {
   }
   if (typeof body.aiEnabled === "boolean") {
     await c.env.STATE.put("config:ai_enabled", String(body.aiEnabled));
+  }
+  if (typeof body.classifyEnabled === "boolean") {
+    await c.env.STATE.put("config:classify_enabled", String(body.classifyEnabled));
   }
   if (typeof body.anthropicKey === "string") {
     if (body.anthropicKey.trim() === "") {
@@ -370,6 +379,47 @@ app.get("/api/usage", async (c) => {
     .bind(accountId)
     .all();
   return c.json(res.results);
+});
+
+// ---------- Prompt management + versioning ----------
+
+app.get("/api/prompts", async (c) => {
+  const accountId = await getAccountId(c.env);
+  const versions = await listPrompts(c.env, accountId);
+  return c.json({
+    defaultGuidance: DEFAULT_REPLY_GUIDANCE,
+    versions: versions.map((v) => ({
+      id: v.id,
+      version: v.version,
+      label: v.label,
+      content: v.content,
+      isActive: v.is_active === 1,
+      createdAt: v.created_at,
+      updatedAt: v.updated_at,
+    })),
+  });
+});
+
+app.post("/api/prompts", async (c) => {
+  const b = (await c.req.json()) as { content?: string; label?: string };
+  if (!b.content || !b.content.trim()) return c.text("content required", 400);
+  const accountId = await getAccountId(c.env);
+  const id = await savePromptVersion(c.env, accountId, b.content.trim(), b.label?.trim() || null);
+  return c.json({ ok: true, id });
+});
+
+app.post("/api/prompts/:id/activate", async (c) => {
+  const accountId = await getAccountId(c.env);
+  const ok = await activatePrompt(c.env, accountId, parseInt(c.req.param("id"), 10));
+  return ok ? c.json({ ok: true }) : c.text("not found", 404);
+});
+
+// ---------- Analytics dashboard ----------
+
+app.get("/api/analytics", async (c) => {
+  const accountId = await getAccountId(c.env);
+  const days = Math.min(90, Math.max(1, parseInt(c.req.query("days") ?? "7", 10) || 7));
+  return c.json(await getAnalytics(c.env, accountId, days));
 });
 
 // Raw webhook delivery trace (diagnostics).
