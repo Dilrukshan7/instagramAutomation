@@ -1,6 +1,9 @@
 // Single-file admin dashboard served by the Worker at "/".
 // Vanilla HTML/JS — no build step. Talks to the /api/* endpoints with the
 // admin token (entered once, kept in localStorage).
+//
+// NOTE: this whole string is a TS template literal, so the embedded CSS/JS must
+// never use backticks or ${...}. Use string concatenation and \\n instead.
 export const DASHBOARD_HTML = `<!doctype html>
 <html lang="en">
 <head>
@@ -8,56 +11,116 @@ export const DASHBOARD_HTML = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>IG Auto-Responder</title>
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    color-scheme: dark;
+    --bg: #0f1115; --panel: #161a22; --panel-2: #121620; --input: #0d1016;
+    --line: #262c38; --line-2: #2c3442; --text: #e6e8ee; --muted: #8b93a3;
+    --dim: #6d7686; --head: #9fb4d8; --accent: #2f6fed; --accent-hi: #4580f2;
+    --s1: 6px; --s2: 10px; --s3: 14px; --s4: 20px; --s5: 28px;
+    --radius: 12px; --radius-sm: 8px;
+  }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: #0f1115; color: #e6e8ee; }
-  header { padding: 16px 24px; background: #161a22; border-bottom: 1px solid #262c38; display: flex; align-items: center; gap: 16px; }
-  header h1 { font-size: 18px; margin: 0; }
-  header .pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; background: #22314a; }
-  main { max-width: 900px; margin: 0 auto; padding: 24px; }
-  section { background: #161a22; border: 1px solid #262c38; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-  h2 { font-size: 15px; margin: 0 0 14px; color: #9fb4d8; text-transform: uppercase; letter-spacing: .08em; }
-  label { display: block; font-size: 13px; color: #aab2c0; margin: 10px 0 4px; }
-  input[type=text], input[type=password], textarea { width: 100%; background: #0d1016; color: #e6e8ee; border: 1px solid #2c3442; border-radius: 8px; padding: 9px 11px; font-size: 14px; font-family: inherit; }
+  body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+
+  /* Top bar */
+  .topbar { display: flex; align-items: center; gap: var(--s3); padding: 14px 24px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 20; }
+  .topbar h1 { font-size: 17px; margin: 0; letter-spacing: .01em; }
+  .pill { font-size: 12px; padding: 3px 12px; border-radius: 999px; background: #22314a; white-space: nowrap; }
+
+  /* Layout: sidebar + content */
+  .layout { display: flex; align-items: stretch; min-height: calc(100vh - 57px); }
+  .sidebar { width: 208px; flex: 0 0 208px; background: var(--panel); border-right: 1px solid var(--line); padding: var(--s3) var(--s2); overflow-y: auto; }
+  .sidebar .navgroup { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--dim); margin: var(--s3) var(--s2) var(--s1); }
+  .sidebar .navgroup:first-child { margin-top: var(--s1); }
+  .sidebar button { display: block; width: 100%; text-align: left; background: transparent; color: var(--muted); border: 0; border-radius: var(--radius-sm); padding: 9px 12px; font-size: 14px; cursor: pointer; margin-bottom: 2px; }
+  .sidebar button:hover { background: #1b2130; color: var(--text); }
+  .sidebar button.active { background: var(--accent); color: #fff; }
+
+  main.content { flex: 1; min-width: 0; max-width: 940px; padding: var(--s4); }
+  .panel { animation: fade .15s ease; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+  /* Cards */
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: var(--s4); margin-bottom: var(--s4); }
+  .section-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); margin-bottom: var(--s3); }
+  .section-head h2 { margin: 0; }
+  h2 { font-size: 13px; margin: 0 0 var(--s3); color: var(--head); text-transform: uppercase; letter-spacing: .08em; }
+  .panel-title { font-size: 20px; text-transform: none; letter-spacing: 0; color: var(--text); margin: 0 0 var(--s4); }
+
+  /* Forms */
+  label { display: block; font-size: 13px; color: var(--muted); margin: var(--s2) 0 var(--s1); }
+  input[type=text], input[type=password], input[type=number], textarea, select.sel {
+    width: 100%; background: var(--input); color: var(--text); border: 1px solid var(--line-2); border-radius: var(--radius-sm); padding: 9px 11px; font-size: 14px; font-family: inherit;
+  }
   textarea { min-height: 64px; resize: vertical; }
-  button { background: #2f6fed; color: #fff; border: 0; border-radius: 8px; padding: 9px 16px; font-size: 14px; cursor: pointer; }
-  button:hover { background: #4580f2; }
-  button.ghost { background: #232936; }
+  select.sel { cursor: pointer; }
+
+  /* Buttons */
+  button { background: var(--accent); color: #fff; border: 0; border-radius: var(--radius-sm); padding: 9px 16px; font-size: 14px; cursor: pointer; }
+  button:hover { background: var(--accent-hi); }
+  button.ghost { background: #232936; color: var(--text); }
+  button.ghost:hover { background: #2b3341; }
   button.danger { background: #46242a; color: #ff9b9b; }
-  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-  .toggle { display: flex; align-items: center; gap: 10px; padding: 10px 0; }
-  .toggle input { width: 18px; height: 18px; }
-  .rule { border: 1px solid #2c3442; border-radius: 10px; padding: 14px; margin-bottom: 14px; background: #121620; }
-  .rule .head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-  .hint { font-size: 12px; color: #6d7686; margin-top: 3px; }
+  button.danger:hover { background: #55282f; }
+  button.sm { padding: 6px 12px; font-size: 13px; }
+
+  .row { display: flex; gap: var(--s2); align-items: center; flex-wrap: wrap; }
+  .savebar { margin-top: var(--s3); }
+  .toggle { display: flex; align-items: center; gap: var(--s2); padding: 8px 0; }
+  .toggle input { width: 18px; height: 18px; flex: 0 0 auto; }
+  .hint { font-size: 12px; color: var(--dim); margin-top: 4px; line-height: 1.5; }
+  .muted { color: var(--dim); font-size: 13px; }
+
+  /* Tables */
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 7px 9px; border-bottom: 1px solid #232936; vertical-align: top; }
-  th { color: #9fb4d8; font-weight: 600; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #232936; vertical-align: top; }
+  th { color: var(--head); font-weight: 600; }
   .status-replied { color: #7fd88f; } .status-error { color: #ff9b9b; } .status-skipped { color: #d8c97f; }
-  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #2f6fed; padding: 10px 22px; border-radius: 999px; opacity: 0; transition: opacity .3s; pointer-events: none; }
-  #toast.show { opacity: 1; }
-  #login { max-width: 420px; margin: 80px auto; }
-  .muted { color: #6d7686; font-size: 13px; }
-  .savebar { margin-top: 14px; }
-  nav.tabs { max-width: 900px; margin: 18px auto 0; padding: 0 24px; display: flex; gap: 8px; }
-  nav.tabs button { background: #1b2130; color: #aab2c0; }
-  nav.tabs button.active { background: #2f6fed; color: #fff; }
-  .post { display: flex; gap: 14px; border: 1px solid #2c3442; border-radius: 10px; padding: 12px; margin-bottom: 12px; background: #121620; align-items: flex-start; }
-  .post img { width: 84px; height: 84px; object-fit: cover; border-radius: 8px; background: #0d1016; }
+
+  /* Repeatable item cards (rules, providers, prompt versions, steps) */
+  .rule { border: 1px solid var(--line-2); border-radius: 10px; padding: var(--s3); margin-bottom: var(--s3); background: var(--panel-2); }
+  .rule .head { display: flex; justify-content: space-between; align-items: center; gap: var(--s2); margin-bottom: var(--s1); flex-wrap: wrap; }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #22314a; margin-left: 8px; }
+
+  /* Stat cards (overview) */
+  .stats { display: flex; gap: var(--s3); flex-wrap: wrap; margin-bottom: var(--s4); }
+  .stat { flex: 1; min-width: 120px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 10px; padding: var(--s3); }
+  .stat .num { font-size: 26px; font-weight: 700; color: var(--text); }
+  .stat .lbl { font-size: 12px; color: var(--dim); margin-top: 2px; }
+
+  /* Posts */
+  .post { display: flex; gap: var(--s3); border: 1px solid var(--line-2); border-radius: 10px; padding: var(--s3); margin-bottom: var(--s3); background: var(--panel-2); align-items: flex-start; }
+  .post img { width: 84px; height: 84px; object-fit: cover; border-radius: var(--radius-sm); background: var(--input); }
   .post .meta { flex: 1; min-width: 0; }
   .post .cap { font-size: 13px; color: #cfd5e1; margin: 2px 0 8px; overflow: hidden; text-overflow: ellipsis; }
-  .post .opts { display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; }
-  .post .opts label { display: flex; align-items: center; gap: 6px; margin: 0; color: #aab2c0; }
-  .badge { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #22314a; margin-left: 8px; }
+  .post .opts { display: flex; gap: var(--s3); flex-wrap: wrap; font-size: 13px; }
+  .post .opts label { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); }
+
+  /* Toast + login */
+  #toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--accent); padding: 10px 22px; border-radius: 999px; opacity: 0; transition: opacity .3s; pointer-events: none; z-index: 50; }
+  #toast.show { opacity: 1; }
+  #login { max-width: 420px; margin: 80px auto; padding: 0 24px; }
+
+  .soft { background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 10px; padding: var(--s3); }
+
+  /* Responsive: sidebar becomes a horizontal strip */
+  @media (max-width: 720px) {
+    .layout { flex-direction: column; min-height: 0; }
+    .sidebar { width: auto; flex: none; border-right: 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 4px; overflow-x: auto; padding: var(--s2); }
+    .sidebar .navgroup { display: none; }
+    .sidebar button { width: auto; display: inline-block; }
+    main.content { padding: var(--s3); max-width: none; }
+  }
 </style>
 </head>
 <body>
-<header>
+
+<div class="topbar">
   <h1>IG Auto-Responder</h1>
   <span class="pill" id="botState">...</span>
   <span style="flex:1"></span>
-  <button class="ghost" id="logoutBtn" style="display:none">Change token</button>
-</header>
+  <button class="ghost sm" id="logoutBtn" style="display:none">Change token</button>
+</div>
 
 <main id="login">
   <section>
@@ -69,202 +132,252 @@ export const DASHBOARD_HTML = `<!doctype html>
   </section>
 </main>
 
-<nav class="tabs" id="tabs" style="display:none">
-  <button data-tab="settings" class="active">Settings</button>
-  <button data-tab="posts">Posts</button>
-  <button data-tab="providers">AI Providers</button>
-  <button data-tab="funnel">Funnel</button>
-  <button data-tab="analytics">Analytics</button>
-  <button data-tab="prompts">Prompts</button>
-</nav>
+<div class="layout" id="appWrap" style="display:none">
 
-<main id="app" style="display:none">
+  <nav class="sidebar" id="tabs">
+    <div class="navgroup">Monitor</div>
+    <button data-tab="overview" class="active">Overview</button>
+    <button data-tab="activity">Activity</button>
+    <div class="navgroup">Automation</div>
+    <button data-tab="posts">Posts</button>
+    <button data-tab="funnel">Funnel</button>
+    <div class="navgroup">AI &amp; Content</div>
+    <button data-tab="ai">AI</button>
+    <button data-tab="content">Content</button>
+    <div class="navgroup">System</div>
+    <button data-tab="settings">Settings</button>
+  </nav>
 
-  <div id="tab-posts" style="display:none">
-    <section>
-      <h2>Which posts get automation?</h2>
-      <div class="row">
-        <label style="margin:0"><input type="radio" name="postMode" value="all"> All posts (default — every post replies unless turned off below)</label>
-      </div>
-      <div class="row">
-        <label style="margin:0"><input type="radio" name="postMode" value="selected"> Only selected posts (new posts stay OFF until enabled below)</label>
-      </div>
-    </section>
-    <section>
-      <h2>Recent posts &amp; reels <button class="ghost" id="refreshMediaBtn" style="float:right">Refresh</button></h2>
-      <div id="postsList"><p class="muted">Loading posts...</p></div>
-    </section>
-  </div>
+  <main class="content" id="app">
 
-  <div id="tab-funnel" style="display:none">
-    <section>
-      <h2>Follow-gate funnel <button class="ghost" id="refreshPendingBtn" style="float:right">Refresh</button></h2>
-      <p class="hint">People who commented on a follow-gated post. They get the nudge DM, then the resource is delivered once they reply and their follow is confirmed. Waiting rows expire after 7 days.</p>
-      <table>
-        <thead><tr><th>User ID</th><th>Status</th><th>Nudges</th><th>Created</th><th>Delivered</th><th>Resource</th></tr></thead>
-        <tbody id="pendingBody"></tbody>
-      </table>
-    </section>
-  </div>
-
-  <div id="tab-analytics" style="display:none">
-    <section>
-      <h2>Analytics
-        <span style="float:right">
-          <select id="anDays" style="background:#0d1016;color:#e6e8ee;border:1px solid #2c3442;border-radius:6px;padding:5px">
-            <option value="1">Today</option>
-            <option value="7" selected>7 days</option>
-            <option value="30">30 days</option>
-            <option value="90">90 days</option>
-          </select>
-          <button class="ghost" id="refreshAnBtn">Refresh</button>
-        </span>
-      </h2>
-      <p class="hint">Counts come from bot activity. Intent &amp; sentiment appear once classification runs (AI replies classify automatically; enable the Settings toggle to classify keyword/fallback replies too).</p>
-      <div id="funnelCards" class="row" style="margin-bottom:16px"></div>
-      <div class="row" style="align-items:flex-start;gap:24px">
-        <div style="flex:1;min-width:240px">
-          <h2 style="font-size:13px">Comment intent</h2>
-          <table><tbody id="intentBody"></tbody></table>
+    <!-- OVERVIEW -->
+    <div id="panel-overview" class="panel">
+      <h2 class="panel-title">Overview</h2>
+      <section>
+        <div class="section-head">
+          <h2>Activity summary</h2>
+          <div class="row" style="gap:8px">
+            <select id="anDays" class="sel" style="width:auto">
+              <option value="1">Today</option>
+              <option value="7" selected>7 days</option>
+              <option value="30">30 days</option>
+              <option value="90">90 days</option>
+            </select>
+            <button class="ghost sm" id="refreshAnBtn">Refresh</button>
+          </div>
         </div>
-        <div style="flex:1;min-width:240px">
-          <h2 style="font-size:13px">Sentiment</h2>
-          <table><tbody id="sentimentBody"></tbody></table>
+        <div id="funnelCards" class="stats"></div>
+        <div class="row" style="align-items:flex-start;gap:24px">
+          <div style="flex:1;min-width:220px">
+            <h2>Comment intent</h2>
+            <table><tbody id="intentBody"></tbody></table>
+          </div>
+          <div style="flex:1;min-width:220px">
+            <h2>Sentiment</h2>
+            <table><tbody id="sentimentBody"></tbody></table>
+          </div>
         </div>
-      </div>
-    </section>
-    <section>
-      <h2>Daily activity</h2>
-      <table>
-        <thead><tr><th>Day</th><th>Comments</th><th>Replies</th><th>DMs</th></tr></thead>
-        <tbody id="dailyBody"></tbody>
-      </table>
-    </section>
-  </div>
-
-  <div id="tab-prompts" style="display:none">
-    <section>
-      <h2>AI system prompt</h2>
-      <p class="hint">This is the tone/style guidance the AI follows when writing replies. The strict JSON output format is enforced separately, so editing this can never break replies. Saving creates a new version; you can roll back anytime. Leave empty history to use the built-in default.</p>
-      <label>Prompt guidance</label>
-      <textarea id="promptContent" style="min-height:150px"></textarea>
-      <label>Version label (optional)</label>
-      <input type="text" id="promptLabel" placeholder="e.g. friendlier tone">
-      <div class="row savebar">
-        <button id="savePromptBtn">Save as new version</button>
-        <button class="ghost" id="loadDefaultBtn">Load built-in default</button>
-      </div>
-    </section>
-    <section>
-      <h2>Version history</h2>
-      <div id="promptVersions"><p class="muted">Loading...</p></div>
-    </section>
-  </div>
-
-  <div id="tab-providers" style="display:none">
-    <section>
-      <h2>Add AI provider</h2>
-      <div class="row">
-        <div style="flex:1;min-width:140px">
-          <label>Provider</label>
-          <select id="pKind" style="width:100%;background:#0d1016;color:#e6e8ee;border:1px solid #2c3442;border-radius:8px;padding:9px">
-            <option value="gemini">Google Gemini</option>
-            <option value="grok">xAI Grok</option>
-            <option value="groq">Groq</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic Claude</option>
-            <option value="custom">Custom / Local LLM (OpenAI-compatible)</option>
-          </select>
-        </div>
-        <div style="flex:1;min-width:140px">
-          <label>Label</label>
-          <input type="text" id="pLabel" placeholder="e.g. My Gemini">
-        </div>
-      </div>
-      <label>API key</label>
-      <input type="password" id="pKey" placeholder="paste key (leave empty for local models)">
-      <div class="row">
-        <div style="flex:1;min-width:160px">
-          <label>Model</label>
-          <input type="text" id="pModel" placeholder="auto-filled from preset">
-        </div>
-        <div style="flex:2;min-width:200px" id="pBaseWrap">
-          <label>Base URL (custom/local only)</label>
-          <input type="text" id="pBase" placeholder="https://your-tunnel.example.com/v1">
-        </div>
-      </div>
-      <p class="hint">Local models (Ollama / LM Studio) run on your PC — the bot in the cloud can only reach them through a public tunnel URL (e.g. cloudflared). Paste that tunnel URL as the Base URL.</p>
-      <div class="savebar"><button id="pAddBtn">Add provider</button></div>
-    </section>
-    <section>
-      <h2>Configured providers</h2>
-      <div id="providersList"><p class="muted">Loading...</p></div>
-    </section>
-    <section>
-      <h2>AI usage (30 days)</h2>
-      <table>
-        <thead><tr><th>Provider</th><th>Calls</th><th>Tokens in</th><th>Tokens out</th></tr></thead>
-        <tbody id="usageBody"></tbody>
-      </table>
-    </section>
-  </div>
-
-  <div id="tab-settings">
-
-  <section>
-    <h2>Bot settings</h2>
-    <div class="toggle"><input type="checkbox" id="enabledToggle"><span>Bot enabled (replies to new comments)</span></div>
-    <div class="toggle"><input type="checkbox" id="aiToggle"><span>AI replies enabled (for comments that match no keyword)</span></div>
-    <div class="toggle"><input type="checkbox" id="classifyToggle"><span>Classify comments (intent + sentiment) &mdash; AI replies classify for free; this also classifies keyword/fallback replies (one extra small AI call each)</span></div>
-    <label>Anthropic API key <span class="muted" id="aiKeyStatus"></span></label>
-    <div class="row">
-      <input type="password" id="aiKeyInput" placeholder="sk-ant-..." style="flex:1">
-      <button id="saveKeyBtn">Save key</button>
-      <button class="danger" id="clearKeyBtn">Remove key</button>
+        <p class="hint" style="margin-top:14px">Intent &amp; sentiment appear once classification runs. AI replies classify automatically; enable "Classify comments" in the AI tab to classify keyword/fallback replies too.</p>
+      </section>
+      <section>
+        <h2>Daily activity</h2>
+        <table>
+          <thead><tr><th>Day</th><th>Comments</th><th>Replies</th><th>DMs</th></tr></thead>
+          <tbody id="dailyBody"></tbody>
+        </table>
+      </section>
     </div>
-    <p class="hint">Without a key (or with AI off), non-keyword comments get the fallback reply below.</p>
-    <div class="savebar"><button id="saveSettingsBtn">Save settings</button></div>
-    <p class="hint" id="tokenMeta"></p>
-  </section>
 
-  <section>
-    <h2>Keyword rules</h2>
-    <p class="hint">When a comment contains one of the keywords, one public reply and one DM are picked at random from the lists. One entry per line.</p>
-    <div id="rulesList"></div>
-    <div class="row savebar">
-      <button class="ghost" id="addRuleBtn">+ Add rule</button>
-      <button id="saveRulesBtn">Save rules</button>
+    <!-- ACTIVITY -->
+    <div id="panel-activity" class="panel" style="display:none">
+      <h2 class="panel-title">Activity</h2>
+      <section>
+        <div class="section-head">
+          <h2>Recent bot activity</h2>
+          <button class="ghost sm" id="refreshLogBtn">Refresh</button>
+        </div>
+        <table>
+          <thead><tr><th>Time</th><th>From</th><th>Comment</th><th>Reply</th><th>Status</th></tr></thead>
+          <tbody id="logBody"></tbody>
+        </table>
+      </section>
     </div>
-  </section>
 
-  <section>
-    <h2>Fallback reply (no keyword match, AI off/unavailable)</h2>
-    <label>Public replies (one per line, picked randomly)</label>
-    <textarea id="fbPublic"></textarea>
-    <label>DM messages (one per line, picked randomly)</label>
-    <textarea id="fbDm"></textarea>
-    <div class="savebar"><button id="saveFbBtn">Save fallback</button></div>
-  </section>
+    <!-- POSTS -->
+    <div id="panel-posts" class="panel" style="display:none">
+      <h2 class="panel-title">Posts &amp; reels</h2>
+      <section>
+        <h2>Which posts get automation?</h2>
+        <div class="row">
+          <label style="margin:0"><input type="radio" name="postMode" value="all"> All posts (default — every post replies unless turned off below)</label>
+        </div>
+        <div class="row">
+          <label style="margin:0"><input type="radio" name="postMode" value="selected"> Only selected posts (new posts stay OFF until enabled below)</label>
+        </div>
+      </section>
+      <section>
+        <div class="section-head">
+          <h2>Recent posts &amp; reels</h2>
+          <button class="ghost sm" id="refreshMediaBtn">Refresh</button>
+        </div>
+        <div id="postsList"><p class="muted">Loading posts...</p></div>
+      </section>
+    </div>
 
-  <section>
-    <h2>Blocklist</h2>
-    <label>If a comment contains any of these phrases, the bot stays silent (one per line)</label>
-    <textarea id="blocklist"></textarea>
-    <div class="savebar"><button id="saveBlockBtn">Save blocklist</button></div>
-  </section>
+    <!-- FUNNEL -->
+    <div id="panel-funnel" class="panel" style="display:none">
+      <h2 class="panel-title">Follow-gate funnel</h2>
+      <section>
+        <div class="section-head">
+          <h2>Pending &amp; delivered</h2>
+          <button class="ghost sm" id="refreshPendingBtn">Refresh</button>
+        </div>
+        <p class="hint">People who commented on a follow-gated post. They get the nudge DM, then the resource is delivered once they reply and their follow is confirmed. Waiting rows expire after 7 days.</p>
+        <table>
+          <thead><tr><th>User ID</th><th>Status</th><th>Nudges</th><th>Created</th><th>Delivered</th><th>Resource</th></tr></thead>
+          <tbody id="pendingBody"></tbody>
+        </table>
+      </section>
+    </div>
 
-  <section>
-    <h2>Activity log <button class="ghost" id="refreshLogBtn" style="float:right">Refresh</button></h2>
-    <table>
-      <thead><tr><th>Time</th><th>From</th><th>Comment</th><th>Reply</th><th>Status</th></tr></thead>
-      <tbody id="logBody"></tbody>
-    </table>
-  </section>
+    <!-- AI -->
+    <div id="panel-ai" class="panel" style="display:none">
+      <h2 class="panel-title">AI</h2>
 
-  </div>
+      <section>
+        <h2>AI behavior</h2>
+        <div class="toggle"><input type="checkbox" id="aiToggle"><span>AI replies enabled (for comments that match no keyword)</span></div>
+        <div class="toggle"><input type="checkbox" id="classifyToggle"><span>Classify comments (intent + sentiment) &mdash; AI replies classify for free; this also classifies keyword/fallback replies (one small extra AI call each)</span></div>
+        <div class="savebar"><button id="saveAiBtn">Save AI settings</button></div>
+      </section>
 
-</main>
+      <section>
+        <h2>Add AI provider</h2>
+        <div class="row">
+          <div style="flex:1;min-width:140px">
+            <label>Provider</label>
+            <select id="pKind" class="sel">
+              <option value="gemini">Google Gemini</option>
+              <option value="grok">xAI Grok</option>
+              <option value="groq">Groq</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic Claude</option>
+              <option value="custom">Custom / Local LLM (OpenAI-compatible)</option>
+            </select>
+          </div>
+          <div style="flex:1;min-width:140px">
+            <label>Label</label>
+            <input type="text" id="pLabel" placeholder="e.g. My Gemini">
+          </div>
+        </div>
+        <label>API key</label>
+        <input type="password" id="pKey" placeholder="paste key (leave empty for local models)">
+        <div class="row">
+          <div style="flex:1;min-width:160px">
+            <label>Model</label>
+            <input type="text" id="pModel" placeholder="auto-filled from preset">
+          </div>
+          <div style="flex:2;min-width:200px" id="pBaseWrap">
+            <label>Base URL (custom/local only)</label>
+            <input type="text" id="pBase" placeholder="https://your-tunnel.example.com/v1">
+          </div>
+        </div>
+        <p class="hint">Local models (Ollama / LM Studio) run on your PC — the bot in the cloud can only reach them through a public tunnel URL (e.g. cloudflared). Paste that tunnel URL as the Base URL.</p>
+        <div class="savebar"><button id="pAddBtn">Add provider</button></div>
+      </section>
+
+      <section>
+        <h2>Configured providers</h2>
+        <div id="providersList"><p class="muted">Loading...</p></div>
+      </section>
+
+      <section>
+        <h2>System prompt</h2>
+        <p class="hint">This is the tone/style guidance the AI follows when writing replies. The strict JSON output format is enforced separately, so editing this can never break replies. Saving creates a new version; you can roll back anytime.</p>
+        <label>Prompt guidance</label>
+        <textarea id="promptContent" style="min-height:150px"></textarea>
+        <label>Version label (optional)</label>
+        <input type="text" id="promptLabel" placeholder="e.g. friendlier tone">
+        <div class="row savebar">
+          <button id="savePromptBtn">Save as new version</button>
+          <button class="ghost" id="loadDefaultBtn">Load built-in default</button>
+        </div>
+        <div style="margin-top:18px"><h2>Version history</h2><div id="promptVersions"><p class="muted">Loading...</p></div></div>
+      </section>
+
+      <section>
+        <h2>AI usage (30 days)</h2>
+        <table>
+          <thead><tr><th>Provider</th><th>Calls</th><th>Tokens in</th><th>Tokens out</th></tr></thead>
+          <tbody id="usageBody"></tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Legacy Anthropic key <span class="muted" id="aiKeyStatus"></span></h2>
+        <p class="hint">Optional fallback used only when no provider above is set as default. Prefer adding an Anthropic provider instead — this exists for backwards compatibility.</p>
+        <div class="row">
+          <input type="password" id="aiKeyInput" placeholder="sk-ant-..." style="flex:1;min-width:200px">
+          <button id="saveKeyBtn">Save key</button>
+          <button class="danger" id="clearKeyBtn">Remove key</button>
+        </div>
+      </section>
+    </div>
+
+    <!-- CONTENT -->
+    <div id="panel-content" class="panel" style="display:none">
+      <h2 class="panel-title">Reply content</h2>
+      <section>
+        <div class="section-head">
+          <h2>Keyword rules</h2>
+          <div class="row">
+            <button class="ghost sm" id="addRuleBtn">+ Add rule</button>
+            <button class="sm" id="saveRulesBtn">Save rules</button>
+          </div>
+        </div>
+        <p class="hint">When a comment contains one of the keywords, one public reply and one DM are picked at random from the lists. One entry per line.</p>
+        <div id="rulesList"></div>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>Fallback reply</h2>
+          <button class="sm" id="saveFbBtn">Save fallback</button>
+        </div>
+        <p class="hint">Used when a comment matches no keyword and AI is off or unavailable.</p>
+        <label>Public replies (one per line, picked randomly)</label>
+        <textarea id="fbPublic"></textarea>
+        <label>DM messages (one per line, picked randomly)</label>
+        <textarea id="fbDm"></textarea>
+      </section>
+
+      <section>
+        <div class="section-head">
+          <h2>Blocklist</h2>
+          <button class="sm" id="saveBlockBtn">Save blocklist</button>
+        </div>
+        <label>If a comment contains any of these phrases, the bot stays silent (one per line)</label>
+        <textarea id="blocklist"></textarea>
+      </section>
+    </div>
+
+    <!-- SETTINGS -->
+    <div id="panel-settings" class="panel" style="display:none">
+      <h2 class="panel-title">Settings</h2>
+      <section>
+        <h2>Bot status</h2>
+        <div class="toggle"><input type="checkbox" id="enabledToggle"><span>Bot enabled (replies to new comments)</span></div>
+        <div class="savebar"><button id="saveSettingsBtn">Save</button></div>
+      </section>
+      <section>
+        <h2>Instagram token</h2>
+        <p class="hint" id="tokenMeta"></p>
+      </section>
+    </div>
+
+  </main>
+</div>
 
 <div id="toast"></div>
 
@@ -293,12 +406,12 @@ export const DASHBOARD_HTML = `<!doctype html>
   }
 
   function showLogin() {
-    el('login').style.display = ''; el('app').style.display = 'none';
-    el('logoutBtn').style.display = 'none'; el('tabs').style.display = 'none';
+    el('login').style.display = ''; el('appWrap').style.display = 'none';
+    el('logoutBtn').style.display = 'none';
   }
   function showApp() {
-    el('login').style.display = 'none'; el('app').style.display = '';
-    el('logoutBtn').style.display = ''; el('tabs').style.display = '';
+    el('login').style.display = 'none'; el('appWrap').style.display = '';
+    el('logoutBtn').style.display = '';
   }
 
   // ---------- Settings ----------
@@ -318,11 +431,14 @@ export const DASHBOARD_HTML = `<!doctype html>
     });
   }
   el('saveSettingsBtn').onclick = function () {
+    api('/settings', 'PUT', { enabled: el('enabledToggle').checked })
+      .then(function () { toast('Settings saved'); return loadSettings(); });
+  };
+  el('saveAiBtn').onclick = function () {
     api('/settings', 'PUT', {
-      enabled: el('enabledToggle').checked,
       aiEnabled: el('aiToggle').checked,
       classifyEnabled: el('classifyToggle').checked
-    }).then(function () { toast('Settings saved'); return loadSettings(); });
+    }).then(function () { toast('AI settings saved'); return loadSettings(); });
   };
   el('saveKeyBtn').onclick = function () {
     var key = el('aiKeyInput').value.trim();
@@ -346,7 +462,7 @@ export const DASHBOARD_HTML = `<!doctype html>
     var title = document.createElement('strong');
     title.textContent = 'Rule ' + (index + 1);
     var del = document.createElement('button');
-    del.className = 'danger'; del.textContent = 'Delete';
+    del.className = 'danger sm'; del.textContent = 'Delete';
     del.onclick = function () { div.remove(); renumber(); };
     head.appendChild(title); head.appendChild(del);
     div.appendChild(head);
@@ -452,29 +568,32 @@ export const DASHBOARD_HTML = `<!doctype html>
   }
   el('refreshLogBtn').onclick = loadLog;
 
-  // ---------- Tabs ----------
+  // ---------- Navigation ----------
   var tabsEl = el('tabs');
+  var PANELS = ['overview', 'activity', 'posts', 'funnel', 'ai', 'content', 'settings'];
   var mediaLoaded = false;
   var providersLoaded = false;
+  var aiLoaded = false;
+  var contentLoaded = false;
+  var activityLoaded = false;
   var providersCache = [];
   var defaultProviderId = null;
+  function showTab(tab) {
+    PANELS.forEach(function (p) { el('panel-' + p).style.display = p === tab ? '' : 'none'; });
+    var btns = tabsEl.querySelectorAll('button');
+    for (var i = 0; i < btns.length; i++) {
+      btns[i].classList.toggle('active', btns[i].getAttribute('data-tab') === tab);
+    }
+    if (tab === 'overview') { loadAnalytics(); }
+    if (tab === 'activity' && !activityLoaded) { activityLoaded = true; loadLog(); }
+    if (tab === 'posts' && !mediaLoaded) { loadProviders().then(loadMedia); }
+    if (tab === 'funnel') { loadPending(); }
+    if (tab === 'ai' && !aiLoaded) { aiLoaded = true; loadProviders(); loadPrompts(); }
+    if (tab === 'content' && !contentLoaded) { contentLoaded = true; loadRules(); loadFallback(); loadBlocklist(); }
+  }
   tabsEl.addEventListener('click', function (e) {
     var btn = e.target.closest('button'); if (!btn) { return; }
-    var tab = btn.getAttribute('data-tab');
-    var btns = tabsEl.querySelectorAll('button');
-    for (var i = 0; i < btns.length; i++) { btns[i].classList.remove('active'); }
-    btn.classList.add('active');
-    el('tab-settings').style.display = tab === 'settings' ? '' : 'none';
-    el('tab-posts').style.display = tab === 'posts' ? '' : 'none';
-    el('tab-providers').style.display = tab === 'providers' ? '' : 'none';
-    el('tab-funnel').style.display = tab === 'funnel' ? '' : 'none';
-    el('tab-analytics').style.display = tab === 'analytics' ? '' : 'none';
-    el('tab-prompts').style.display = tab === 'prompts' ? '' : 'none';
-    if (tab === 'posts' && !mediaLoaded) { loadProviders().then(loadMedia); }
-    if (tab === 'providers' && !providersLoaded) { loadProviders(); }
-    if (tab === 'funnel') { loadPending(); }
-    if (tab === 'analytics') { loadAnalytics(); }
-    if (tab === 'prompts') { loadPrompts(); }
+    showTab(btn.getAttribute('data-tab'));
   });
 
   // ---------- Funnel (pending deliveries) ----------
@@ -511,12 +630,11 @@ export const DASHBOARD_HTML = `<!doctype html>
   // ---------- Analytics ----------
   function statCard(label, value) {
     var d = document.createElement('div');
-    d.style.cssText = 'flex:1;min-width:120px;background:#121620;border:1px solid #2c3442;border-radius:10px;padding:12px';
+    d.className = 'stat';
     var v = document.createElement('div');
-    v.style.cssText = 'font-size:24px;font-weight:700;color:#e6e8ee';
-    v.textContent = value;
+    v.className = 'num'; v.textContent = value;
     var l = document.createElement('div');
-    l.className = 'hint'; l.style.marginTop = '2px'; l.textContent = label;
+    l.className = 'lbl'; l.textContent = label;
     d.appendChild(v); d.appendChild(l);
     return d;
   }
@@ -593,13 +711,13 @@ export const DASHBOARD_HTML = `<!doctype html>
         }
         head.appendChild(title);
         var btns = document.createElement('div'); btns.className = 'row';
-        btns.appendChild(actionBtn('Edit', 'ghost', function () {
+        btns.appendChild(actionBtn('Edit', 'ghost sm', function () {
           el('promptContent').value = v.content;
           el('promptLabel').value = v.label || '';
           toast('Loaded v' + v.version + ' into editor');
         }));
         if (!v.isActive) {
-          btns.appendChild(actionBtn('Activate', '', function () {
+          btns.appendChild(actionBtn('Activate', 'sm', function () {
             api('/prompts/' + v.id + '/activate', 'POST').then(function () {
               toast('v' + v.version + ' is now active'); loadPrompts();
             });
@@ -659,7 +777,7 @@ export const DASHBOARD_HTML = `<!doctype html>
     var list = el('providersList');
     list.innerHTML = '';
     if (providersCache.length === 0) {
-      list.innerHTML = '<p class="muted">No providers yet. The bot falls back to the legacy Anthropic key (Settings tab) or template replies.</p>';
+      list.innerHTML = '<p class="muted">No providers yet. The bot falls back to the legacy Anthropic key (below) or template replies.</p>';
       return;
     }
     providersCache.forEach(function (p) {
@@ -676,22 +794,22 @@ export const DASHBOARD_HTML = `<!doctype html>
       head.appendChild(title);
       var btns = document.createElement('div');
       btns.className = 'row';
-      btns.appendChild(actionBtn('Test', '', function (btn) {
+      btns.appendChild(actionBtn('Test', 'sm', function (btn) {
         btn.textContent = 'Testing...';
         api('/providers/' + p.id + '/test', 'POST').then(function (r) {
           toast(r.ok ? 'OK: ' + r.detail : 'FAILED: ' + r.detail);
           loadProviders();
         });
       }));
-      btns.appendChild(actionBtn(p.enabled ? 'Disable' : 'Enable', 'ghost', function () {
+      btns.appendChild(actionBtn(p.enabled ? 'Disable' : 'Enable', 'ghost sm', function () {
         api('/providers/' + p.id, 'PUT', { enabled: !p.enabled }).then(loadProviders);
       }));
       if (p.id !== defaultProviderId) {
-        btns.appendChild(actionBtn('Make default', 'ghost', function () {
+        btns.appendChild(actionBtn('Make default', 'ghost sm', function () {
           api('/providers/' + p.id, 'PUT', { makeDefault: true }).then(loadProviders);
         }));
       }
-      btns.appendChild(actionBtn('Delete', 'danger', function () {
+      btns.appendChild(actionBtn('Delete', 'danger sm', function () {
         if (confirm('Delete provider "' + p.label + '"?')) {
           api('/providers/' + p.id, 'DELETE').then(loadProviders);
         }
@@ -831,7 +949,7 @@ export const DASHBOARD_HTML = `<!doctype html>
     var wrap = document.createElement('div');
     wrap.style.marginTop = '8px';
     var toggle = document.createElement('button');
-    toggle.className = 'ghost';
+    toggle.className = 'ghost sm';
     toggle.textContent = 'Follow-gate' + (a && a.requireFollow ? ' (ON)' : '');
     var panel = document.createElement('div');
     panel.style.display = 'none';
@@ -880,7 +998,7 @@ export const DASHBOARD_HTML = `<!doctype html>
     var wrap = document.createElement('div');
     wrap.style.marginTop = '8px';
     var toggle = document.createElement('button');
-    toggle.className = 'ghost';
+    toggle.className = 'ghost sm';
     toggle.textContent = 'Message sequence';
     var panel = document.createElement('div');
     panel.style.display = 'none';
@@ -897,11 +1015,11 @@ export const DASHBOARD_HTML = `<!doctype html>
     var stepsBox = document.createElement('div');
     var controls = document.createElement('div');
     controls.className = 'row'; controls.style.marginTop = '8px';
-    controls.appendChild(mkBtn('+ Add step', 'ghost', function () {
+    controls.appendChild(mkBtn('+ Add step', 'ghost sm', function () {
       stepsBox.appendChild(stepRow({ type: 'dm', variations: [], delaySeconds: 0 }));
     }));
-    controls.appendChild(mkBtn('Save sequence', '', function () { save(); }));
-    controls.appendChild(mkBtn('Clear', 'danger', function () {
+    controls.appendChild(mkBtn('Save sequence', 'sm', function () { save(); }));
+    controls.appendChild(mkBtn('Clear', 'danger sm', function () {
       if (confirm('Remove the whole sequence for this post?')) {
         api('/steps', 'PUT', { mediaId: mediaId, steps: [] }).then(function () {
           stepsBox.innerHTML = ''; toast('Sequence cleared');
@@ -936,9 +1054,9 @@ export const DASHBOARD_HTML = `<!doctype html>
       delayWrap.appendChild(delay); left.appendChild(delayWrap);
       head.appendChild(left);
       var btns = document.createElement('div'); btns.className = 'row';
-      btns.appendChild(mkBtn('Up', 'ghost', function () { if (row.previousSibling) { stepsBox.insertBefore(row, row.previousSibling); } }));
-      btns.appendChild(mkBtn('Down', 'ghost', function () { if (row.nextSibling) { stepsBox.insertBefore(row.nextSibling, row); } }));
-      btns.appendChild(mkBtn('Remove', 'danger', function () { row.remove(); }));
+      btns.appendChild(mkBtn('Up', 'ghost sm', function () { if (row.previousSibling) { stepsBox.insertBefore(row, row.previousSibling); } }));
+      btns.appendChild(mkBtn('Down', 'ghost sm', function () { if (row.nextSibling) { stepsBox.insertBefore(row.nextSibling, row); } }));
+      btns.appendChild(mkBtn('Remove', 'danger sm', function () { row.remove(); }));
       head.appendChild(btns);
       row.appendChild(head);
       var ta = document.createElement('textarea'); ta.className = 'stepVars';
@@ -994,8 +1112,8 @@ export const DASHBOARD_HTML = `<!doctype html>
 
   // ---------- Boot ----------
   function boot() {
-    Promise.all([loadSettings(), loadRules(), loadFallback(), loadBlocklist(), loadLog()])
-      .then(showApp)
+    loadSettings()
+      .then(function () { showApp(); showTab('overview'); })
       .catch(function (err) { console.log(err); });
   }
   el('loginBtn').onclick = function () {
