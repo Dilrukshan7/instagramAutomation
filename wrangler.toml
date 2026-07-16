@@ -26,6 +26,11 @@ class_name = "Scheduler"
 tag = "v1"
 new_sqlite_classes = ["Scheduler"]
 
+# Workers AI: used only for text embeddings (RAG retrieval). Free daily
+# allowance; bge-m3 is multilingual. No API key needed — native binding.
+[ai]
+binding = "AI"
+
 [vars]
 # Your Instagram professional account's user ID (from the Meta app dashboard / /me endpoint)
 IG_USER_ID = "17841456545805611"

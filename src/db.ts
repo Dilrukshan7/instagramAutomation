@@ -492,3 +492,128 @@ export async function listPending(env: Env, accountId: number, limit = 50): Prom
     .all<PendingDelivery>();
   return res.results;
 }
+
+// ---------- Knowledge base (RAG) ----------
+
+export interface KbCollection {
+  id: number;
+  account_id: number;
+  name: string;
+  style_note: string | null;
+  enabled: number;
+  embed_model: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface KbChunk {
+  id: number;
+  collection_id: number;
+  content: string;
+  embedding: string; // JSON float array
+}
+
+/** Collections with their chunk counts, for the dashboard. */
+export async function listCollections(
+  env: Env,
+  accountId: number,
+): Promise<Array<KbCollection & { chunk_count: number }>> {
+  const res = await env.DB.prepare(
+    `SELECT c.*, (SELECT COUNT(*) FROM kb_chunks k WHERE k.collection_id = c.id) AS chunk_count
+     FROM kb_collections c WHERE c.account_id = ? ORDER BY c.id DESC`,
+  )
+    .bind(accountId)
+    .all<KbCollection & { chunk_count: number }>();
+  return res.results;
+}
+
+export async function getCollection(env: Env, accountId: number, id: number): Promise<KbCollection | null> {
+  return env.DB.prepare("SELECT * FROM kb_collections WHERE id = ? AND account_id = ?")
+    .bind(id, accountId)
+    .first<KbCollection>();
+}
+
+export async function createCollection(
+  env: Env,
+  accountId: number,
+  name: string,
+  styleNote: string | null,
+): Promise<number> {
+  const row = await env.DB.prepare(
+    "INSERT INTO kb_collections (account_id, name, style_note) VALUES (?, ?, ?) RETURNING id",
+  )
+    .bind(accountId, name, styleNote)
+    .first<{ id: number }>();
+  return row!.id;
+}
+
+export async function updateCollectionMeta(
+  env: Env,
+  accountId: number,
+  id: number,
+  fields: { name?: string; styleNote?: string | null; enabled?: boolean },
+): Promise<void> {
+  await env.DB.prepare(
+    `UPDATE kb_collections SET
+       name = COALESCE(?, name),
+       style_note = CASE WHEN ? = 1 THEN ? ELSE style_note END,
+       enabled = COALESCE(?, enabled),
+       updated_at = datetime('now')
+     WHERE id = ? AND account_id = ?`,
+  )
+    .bind(
+      fields.name ?? null,
+      fields.styleNote !== undefined ? 1 : 0,
+      fields.styleNote ?? null,
+      fields.enabled === undefined ? null : fields.enabled ? 1 : 0,
+      id,
+      accountId,
+    )
+    .run();
+}
+
+export async function deleteCollection(env: Env, accountId: number, id: number): Promise<void> {
+  await env.DB.prepare("DELETE FROM kb_chunks WHERE collection_id = ? AND account_id = ?").bind(id, accountId).run();
+  await env.DB.prepare("DELETE FROM kb_collections WHERE id = ? AND account_id = ?").bind(id, accountId).run();
+}
+
+/** Full-replace a collection's chunks with freshly embedded ones. */
+export async function replaceChunks(
+  env: Env,
+  accountId: number,
+  collectionId: number,
+  chunks: Array<{ content: string; embedding: number[] }>,
+  embedModel: string,
+): Promise<void> {
+  await env.DB.prepare("DELETE FROM kb_chunks WHERE collection_id = ? AND account_id = ?")
+    .bind(collectionId, accountId)
+    .run();
+  for (const ch of chunks) {
+    await env.DB.prepare(
+      "INSERT INTO kb_chunks (account_id, collection_id, content, embedding) VALUES (?, ?, ?, ?)",
+    )
+      .bind(accountId, collectionId, ch.content, JSON.stringify(ch.embedding))
+      .run();
+  }
+  await env.DB.prepare(
+    "UPDATE kb_collections SET embed_model = ?, updated_at = datetime('now') WHERE id = ? AND account_id = ?",
+  )
+    .bind(embedModel, collectionId, accountId)
+    .run();
+}
+
+/** All chunks from enabled collections whose embed_model matches the current one. */
+export async function getEnabledChunks(
+  env: Env,
+  accountId: number,
+  embedModel: string,
+): Promise<Array<KbChunk & { style_note: string | null }>> {
+  const res = await env.DB.prepare(
+    `SELECT k.id, k.collection_id, k.content, k.embedding, c.style_note
+     FROM kb_chunks k JOIN kb_collections c ON c.id = k.collection_id
+     WHERE k.account_id = ? AND c.enabled = 1 AND c.embed_model = ?`,
+  )
+    .bind(accountId, embedModel)
+    .all<KbChunk & { style_note: string | null }>();
+  return res.results;
+}

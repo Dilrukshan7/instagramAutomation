@@ -2,21 +2,29 @@ import { Hono } from "hono";
 import { DASHBOARD_HTML } from "./dashboard";
 import {
   activatePrompt,
+  createCollection,
+  deleteCollection,
   expireOldPending,
   getAccountId,
   getAnalytics,
+  getCollection,
   getOrCreateAutomationId,
   getStepsForMedia,
   listAutomations,
+  listCollections,
   listPending,
   listPrompts,
+  replaceChunks,
   replaceSteps,
   savePromptVersion,
+  updateCollectionMeta,
   upsertAutomation,
 } from "./db";
 import { runPendingRecheck } from "./followgate";
 import { getRecentMedia, refreshToken } from "./graph";
+import { EMBED_MODEL, embedTexts } from "./llm/embed";
 import { DEFAULT_REPLY_GUIDANCE, getProviderRow, KIND_PRESETS, testProviderRow } from "./llm/registry";
+import { chunkText, retrieveContext } from "./rag";
 import type { ProviderRow } from "./llm/registry";
 import { processWebhook } from "./processor";
 import { getBlocklist, getFallback, getRules, normalizeRule } from "./rules";
@@ -420,6 +428,100 @@ app.get("/api/analytics", async (c) => {
   const accountId = await getAccountId(c.env);
   const days = Math.min(90, Math.max(1, parseInt(c.req.query("days") ?? "7", 10) || 7));
   return c.json(await getAnalytics(c.env, accountId, days));
+});
+
+// ---------- Knowledge base (RAG / persona replies) ----------
+
+const MAX_KB_CHUNKS = 2000; // safety cap per save (keeps brute-force retrieval fast)
+
+app.get("/api/kb", async (c) => {
+  const accountId = await getAccountId(c.env);
+  const cols = await listCollections(c.env, accountId);
+  return c.json({
+    kbEnabled: (await c.env.STATE.get("config:kb_enabled")) === "true",
+    embedModel: EMBED_MODEL,
+    collections: cols.map((c2) => ({
+      id: c2.id,
+      name: c2.name,
+      styleNote: c2.style_note ?? "",
+      enabled: c2.enabled === 1,
+      chunkCount: c2.chunk_count,
+      embedModel: c2.embed_model,
+      updatedAt: c2.updated_at,
+    })),
+  });
+});
+
+app.put("/api/kb-settings", async (c) => {
+  const b = (await c.req.json()) as { enabled?: boolean };
+  if (typeof b.enabled === "boolean") {
+    await c.env.STATE.put("config:kb_enabled", String(b.enabled));
+  }
+  return c.json({ ok: true });
+});
+
+app.post("/api/kb", async (c) => {
+  const b = (await c.req.json()) as { name?: string; styleNote?: string };
+  if (!b.name || !b.name.trim()) return c.text("name required", 400);
+  const accountId = await getAccountId(c.env);
+  const id = await createCollection(c.env, accountId, b.name.trim(), b.styleNote?.trim() || null);
+  return c.json({ ok: true, id });
+});
+
+// Update meta (name/styleNote/enabled) and/or replace the text (re-chunk + re-embed).
+app.put("/api/kb/:id", async (c) => {
+  const id = parseInt(c.req.param("id"), 10);
+  const accountId = await getAccountId(c.env);
+  const existing = await getCollection(c.env, accountId, id);
+  if (!existing) return c.text("not found", 404);
+  const b = (await c.req.json()) as {
+    name?: string; styleNote?: string; enabled?: boolean; text?: string;
+  };
+  await updateCollectionMeta(c.env, accountId, id, {
+    name: b.name,
+    styleNote: b.styleNote === undefined ? undefined : b.styleNote,
+    enabled: b.enabled,
+  });
+  if (typeof b.text === "string") {
+    const chunks = chunkText(b.text);
+    if (chunks.length > MAX_KB_CHUNKS) {
+      return c.text(`too many lines (${chunks.length}); max ${MAX_KB_CHUNKS}`, 400);
+    }
+    if (chunks.length === 0) {
+      await replaceChunks(c.env, accountId, id, [], EMBED_MODEL);
+      return c.json({ ok: true, chunks: 0 });
+    }
+    let vectors: number[][];
+    try {
+      vectors = await embedTexts(c.env, chunks);
+    } catch (err) {
+      return c.text(`embedding failed: ${err instanceof Error ? err.message : err}`, 502);
+    }
+    await replaceChunks(
+      c.env,
+      accountId,
+      id,
+      chunks.map((content, i) => ({ content, embedding: vectors[i] })),
+      EMBED_MODEL,
+    );
+    return c.json({ ok: true, chunks: chunks.length });
+  }
+  return c.json({ ok: true });
+});
+
+app.delete("/api/kb/:id", async (c) => {
+  const accountId = await getAccountId(c.env);
+  await deleteCollection(c.env, accountId, parseInt(c.req.param("id"), 10));
+  return c.json({ ok: true });
+});
+
+// Test retrieval: given sample text, return the top matching reference lines.
+app.post("/api/kb/test", async (c) => {
+  const b = (await c.req.json()) as { text?: string };
+  if (!b.text || !b.text.trim()) return c.text("text required", 400);
+  const accountId = await getAccountId(c.env);
+  const rag = await retrieveContext(c.env, accountId, b.text.trim());
+  return c.json({ lines: rag.lines, styleNotes: rag.styleNotes });
 });
 
 // Raw webhook delivery trace (diagnostics).

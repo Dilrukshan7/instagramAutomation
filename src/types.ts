@@ -3,6 +3,7 @@ import type { Scheduler } from "./scheduler";
 export interface Env {
   STATE: KVNamespace;
   DB: D1Database;
+  AI: Ai;
   SCHEDULER: DurableObjectNamespace<Scheduler>;
   IG_USER_ID: string;
   GRAPH_API_VERSION: string;

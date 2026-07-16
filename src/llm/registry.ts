@@ -1,5 +1,7 @@
 import type { Automation } from "../db";
 import { getActivePrompt, recordAiUsage, recordClassification } from "../db";
+import { retrieveContext } from "../rag";
+import type { RagContext } from "../rag";
 import type { Env, ReplyDecision } from "../types";
 import { anthropicProvider } from "./anthropic";
 import { geminiProvider } from "./gemini";
@@ -92,11 +94,28 @@ const REPLY_JSON_CONTRACT = `Respond with ONLY a JSON object (no code fences, no
 - intent: one of question | interested | praise | complaint | spam | other
 - sentiment: one of positive | neutral | negative`;
 
-/** Assemble the system prompt: active/default guidance + fixed JSON contract + per-post note. */
-async function buildSystemPrompt(env: Env, accountId: number, automation: Automation | null): Promise<string> {
+/** Persona/reference block injected when the knowledge base returns matches. */
+function ragBlock(rag: RagContext): string {
+  if (rag.lines.length === 0) return "";
+  const notes = rag.styleNotes.length > 0 ? `\nPersona notes: ${rag.styleNotes.join(" ")}` : "";
+  const lines = rag.lines.map((l) => `- ${l}`).join("\n");
+  return (
+    `\n\nYou reply in a specific persona. Match the tone and style of the reference lines below; ` +
+    `adapt or quote them when they fit the comment, otherwise keep the persona and answer naturally. ` +
+    `Never force an irrelevant line.${notes}\nReference lines:\n${lines}`
+  );
+}
+
+/** Assemble the system prompt: active/default guidance + optional persona block + fixed JSON contract + per-post note. */
+async function buildSystemPrompt(
+  env: Env,
+  accountId: number,
+  automation: Automation | null,
+  rag: RagContext,
+): Promise<string> {
   const active = await getActivePrompt(env, accountId);
   const guidance = active?.content?.trim() || DEFAULT_REPLY_GUIDANCE;
-  let system = `${guidance}\n\n${REPLY_JSON_CONTRACT}`;
+  let system = `${guidance}${ragBlock(rag)}\n\n${REPLY_JSON_CONTRACT}`;
   if (automation?.system_prompt) {
     system += `\n\nAdditional instructions for this post:\n${automation.system_prompt}`;
   }
@@ -137,7 +156,13 @@ export async function generateViaLLM(
   }
   if (!provider || !model) return null;
 
-  const system = await buildSystemPrompt(env, accountId, automation);
+  // RAG: pull persona/reference lines matching this comment (gated, best-effort).
+  let rag: RagContext = { lines: [], styleNotes: [] };
+  if ((await env.STATE.get("config:kb_enabled")) === "true") {
+    rag = await retrieveContext(env, accountId, comment);
+  }
+
+  const system = await buildSystemPrompt(env, accountId, automation, rag);
 
   const result = await provider.generate({
     system,

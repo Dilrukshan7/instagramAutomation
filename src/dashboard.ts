@@ -143,6 +143,7 @@ export const DASHBOARD_HTML = `<!doctype html>
     <button data-tab="funnel">Funnel</button>
     <div class="navgroup">AI &amp; Content</div>
     <button data-tab="ai">AI</button>
+    <button data-tab="knowledge">Knowledge</button>
     <button data-tab="content">Content</button>
     <div class="navgroup">System</div>
     <button data-tab="settings">Settings</button>
@@ -362,6 +363,38 @@ export const DASHBOARD_HTML = `<!doctype html>
       </section>
     </div>
 
+    <!-- KNOWLEDGE (RAG) -->
+    <div id="panel-knowledge" class="panel" style="display:none">
+      <h2 class="panel-title">Knowledge base</h2>
+      <section>
+        <h2>Persona / style replies</h2>
+        <p class="hint">Paste reference text (e.g. movie dialogs) into a collection. When enabled, the bot finds the lines most similar to each comment and replies in that style. Works with any language, including Tamil/Tanglish. Only affects AI replies (keyword rules are unchanged). Retrieval uses Cloudflare Workers AI embeddings (free).</p>
+        <div class="toggle"><input type="checkbox" id="kbEnabledToggle"><span>Use the knowledge base for AI replies</span></div>
+      </section>
+
+      <section>
+        <h2>Add a collection</h2>
+        <label>Name</label>
+        <input type="text" id="kbName" placeholder="e.g. Tamil movie dialogs">
+        <label>Style note (optional persona hint)</label>
+        <input type="text" id="kbStyle" placeholder="e.g. reply with dramatic, filmy energy">
+        <div class="savebar"><button id="kbAddBtn">Create collection</button></div>
+      </section>
+
+      <section>
+        <h2>Collections</h2>
+        <div id="kbList"><p class="muted">Loading...</p></div>
+      </section>
+
+      <section>
+        <h2>Test retrieval</h2>
+        <p class="hint">Type a sample comment to see which reference lines would be pulled in.</p>
+        <input type="text" id="kbTestInput" placeholder="e.g. nice video bro">
+        <div class="savebar"><button class="ghost" id="kbTestBtn">Find matches</button></div>
+        <div id="kbTestResult"></div>
+      </section>
+    </div>
+
     <!-- SETTINGS -->
     <div id="panel-settings" class="panel" style="display:none">
       <h2 class="panel-title">Settings</h2>
@@ -570,12 +603,13 @@ export const DASHBOARD_HTML = `<!doctype html>
 
   // ---------- Navigation ----------
   var tabsEl = el('tabs');
-  var PANELS = ['overview', 'activity', 'posts', 'funnel', 'ai', 'content', 'settings'];
+  var PANELS = ['overview', 'activity', 'posts', 'funnel', 'ai', 'knowledge', 'content', 'settings'];
   var mediaLoaded = false;
   var providersLoaded = false;
   var aiLoaded = false;
   var contentLoaded = false;
   var activityLoaded = false;
+  var kbLoaded = false;
   var providersCache = [];
   var defaultProviderId = null;
   function showTab(tab) {
@@ -589,6 +623,7 @@ export const DASHBOARD_HTML = `<!doctype html>
     if (tab === 'posts' && !mediaLoaded) { loadProviders().then(loadMedia); }
     if (tab === 'funnel') { loadPending(); }
     if (tab === 'ai' && !aiLoaded) { aiLoaded = true; loadProviders(); loadPrompts(); }
+    if (tab === 'knowledge' && !kbLoaded) { kbLoaded = true; loadKb(); }
     if (tab === 'content' && !contentLoaded) { contentLoaded = true; loadRules(); loadFallback(); loadBlocklist(); }
   }
   tabsEl.addEventListener('click', function (e) {
@@ -746,6 +781,98 @@ export const DASHBOARD_HTML = `<!doctype html>
   el('loadDefaultBtn').onclick = function () {
     el('promptContent').value = promptDefault;
     toast('Loaded built-in default (not saved yet)');
+  };
+
+  // ---------- Knowledge base (RAG) ----------
+  function kbCard(col) {
+    var div = document.createElement('div');
+    div.className = 'rule';
+    var head = document.createElement('div'); head.className = 'head';
+    var title = document.createElement('strong');
+    title.textContent = col.name;
+    var badge = document.createElement('span'); badge.className = 'badge';
+    badge.textContent = col.chunkCount + ' lines';
+    title.appendChild(badge);
+    if (!col.enabled) {
+      var off = document.createElement('span'); off.className = 'badge'; off.textContent = 'OFF';
+      title.appendChild(off);
+    }
+    head.appendChild(title);
+    var btns = document.createElement('div'); btns.className = 'row';
+    btns.appendChild(actionBtn(col.enabled ? 'Disable' : 'Enable', 'ghost sm', function () {
+      api('/kb/' + col.id, 'PUT', { enabled: !col.enabled }).then(function () { loadKb(); });
+    }));
+    btns.appendChild(actionBtn('Delete', 'danger sm', function () {
+      if (confirm('Delete collection "' + col.name + '"?')) { api('/kb/' + col.id, 'DELETE').then(loadKb); }
+    }));
+    head.appendChild(btns);
+    div.appendChild(head);
+
+    var l1 = document.createElement('label'); l1.textContent = 'Style note (optional persona hint)';
+    var styleIn = document.createElement('input'); styleIn.type = 'text'; styleIn.value = col.styleNote || '';
+    div.appendChild(l1); div.appendChild(styleIn);
+
+    var l2 = document.createElement('label');
+    l2.textContent = 'Reference text — one line per entry. Saving REPLACES the current ' + col.chunkCount + ' line(s).';
+    var ta = document.createElement('textarea');
+    ta.placeholder = 'Paste your dialogs / lines here, one per line...';
+    div.appendChild(l2); div.appendChild(ta);
+
+    var hint = document.createElement('p'); hint.className = 'hint';
+    hint.textContent = 'Text is embedded into searchable lines; the raw text is not shown back here. Leave the box empty to keep existing lines and only update the style note.';
+    div.appendChild(hint);
+
+    var save = document.createElement('button'); save.textContent = 'Save collection'; save.style.marginTop = '8px';
+    save.onclick = function () {
+      var body = { styleNote: styleIn.value };
+      if (ta.value.trim() !== '') { body.text = ta.value; }
+      save.textContent = 'Saving...'; save.disabled = true;
+      api('/kb/' + col.id, 'PUT', body).then(function (r) {
+        toast(body.text !== undefined ? ('Saved — ' + (r.chunks == null ? 0 : r.chunks) + ' lines embedded') : 'Saved');
+        loadKb();
+      }).catch(function () { save.textContent = 'Save collection'; save.disabled = false; toast('Save failed'); });
+    };
+    div.appendChild(save);
+    return div;
+  }
+  function loadKb() {
+    return api('/kb').then(function (res) {
+      kbLoaded = true;
+      el('kbEnabledToggle').checked = !!res.kbEnabled;
+      var list = el('kbList'); list.innerHTML = '';
+      if (!res.collections || res.collections.length === 0) {
+        list.innerHTML = '<p class="muted">No collections yet. Create one above and paste your reference text.</p>';
+        return;
+      }
+      res.collections.forEach(function (col) { list.appendChild(kbCard(col)); });
+    });
+  }
+  el('kbEnabledToggle').onchange = function () {
+    api('/kb-settings', 'PUT', { enabled: el('kbEnabledToggle').checked }).then(function () { toast('Saved'); });
+  };
+  el('kbAddBtn').onclick = function () {
+    var name = el('kbName').value.trim();
+    if (!name) { toast('Name required'); return; }
+    api('/kb', 'POST', { name: name, styleNote: el('kbStyle').value.trim() }).then(function () {
+      el('kbName').value = ''; el('kbStyle').value = ''; toast('Collection created'); loadKb();
+    });
+  };
+  el('kbTestBtn').onclick = function () {
+    var text = el('kbTestInput').value.trim();
+    if (!text) { toast('Type a sample comment'); return; }
+    api('/kb/test', 'POST', { text: text }).then(function (r) {
+      var box = el('kbTestResult'); box.innerHTML = '';
+      if (!r.lines || r.lines.length === 0) {
+        box.innerHTML = '<p class="muted">No matches (KB empty/disabled, or nothing similar enough).</p>'; return;
+      }
+      var ul = document.createElement('ul'); ul.style.margin = '10px 0 0';
+      r.lines.forEach(function (l) { var li = document.createElement('li'); li.textContent = l; ul.appendChild(li); });
+      box.appendChild(ul);
+      if (r.styleNotes && r.styleNotes.length) {
+        var p = document.createElement('p'); p.className = 'hint';
+        p.textContent = 'Persona notes: ' + r.styleNotes.join(' '); box.appendChild(p);
+      }
+    });
   };
 
   // ---------- Providers ----------
